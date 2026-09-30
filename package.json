@@ -1,0 +1,9 @@
+{
+  "name": "ventilator-simulator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node serve.mjs",
+    "deploy": "npx wrangler pages deploy public --project-name=ventilator-simulator"
+  }
+}

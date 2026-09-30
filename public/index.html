@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>人工呼吸器シミュレーター</title>
+<meta name="description" content="医師・RST 向けの人工呼吸器学習用シミュレーター。換気モード・波形・ループ・非同調を再現します。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1118'/%3E%3Cpath d='M3 20h5l3-10 4 14 3-8 2 4h9' fill='none' stroke='%233ddc97' stroke-width='2.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+<script>
+  try { const t = localStorage.getItem('vs-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 20h5l3-10 4 14 3-8 2 4h9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+    <div>
+      <div class="brand-title">Ventilator Simulator</div>
+      <div class="brand-sub">人工呼吸器シミュレーター</div>
+    </div>
+  </div>
+  <div class="mode-chip" id="modeChip" data-help="mode"></div>
+  <div class="top-actions">
+    <button class="btn on" id="btnScen">シナリオ</button>
+    <button class="btn icon" id="btnRun" title="一時停止 / 再開" aria-label="一時停止">❚❚</button>
+    <label class="sel"><span>速度</span>
+      <select id="selSpeed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    </label>
+    <label class="sel"><span>掃引</span>
+      <select id="selWin"><option value="6">6 秒</option><option value="10" selected>10 秒</option><option value="20">20 秒</option></select>
+    </label>
+    <button class="btn toggle" id="btnPmus" data-help="pmus" aria-pressed="false">Pmus</button>
+    <button class="btn icon" id="btnTheme" title="テーマ切替" aria-label="テーマ切替">◐</button>
+  </div>
+</header>
+
+<main class="layout">
+  <div class="col col-main">
+    <section class="panel scenario" id="scenarioHost" hidden aria-label="シナリオ"></section>
+    <section class="panel waves" aria-label="波形">
+      <div class="alarmbar" id="alarmBar">
+        <div class="alarm-list" id="alarmList" aria-live="assertive"></div>
+        <div class="alarm-actions">
+          <button class="btn small" id="btnSilence" data-help="silence">消音 2分</button>
+          <button class="btn small" id="btnAlarmReset" data-help="alarmreset">リセット</button>
+          <button class="btn small toggle" id="btnSound" aria-pressed="false" data-help="sound">警報音</button>
+        </div>
+      </div>
+      <div class="wave"><canvas id="cvPaw"></canvas></div>
+      <div class="wave"><canvas id="cvFlow"></canvas></div>
+      <div class="wave"><canvas id="cvVol"></canvas></div>
+      <div class="legend" data-help="segbar">
+        <span><i class="sw mand"></i>強制</span>
+        <span><i class="sw assist"></i>補助（患者トリガー）</span>
+        <span><i class="sw spont"></i>自発（PS/CPAP）</span>
+        <span><i class="tri">▼</i>トリガー</span>
+        <span><i class="amk">不発</i>非同調</span>
+        <span class="pmus-legend"><i class="sw pmus"></i>Pmus（吸気努力）</span>
+      </div>
+    </section>
+      <section class="panel lower" aria-label="ループと肺">
+      <div class="loop"><canvas id="cvPV"></canvas></div>
+      <div class="loop"><canvas id="cvFV"></canvas></div>
+      <div class="lungbox" id="lungBox"></div>
+      <div class="loop-actions">
+        <button class="btn small" id="btnRef" data-help="loopref">基準ループ保存</button>
+        <button class="btn small" id="btnRefClear">基準クリア</button>
+      </div>
+    </section>
+      <section class="panel settings" aria-label="換気設定">
+      <div class="tabs" role="tablist">
+        <button class="tab on" role="tab" aria-selected="true" data-tab="vent">換気設定 <small>Settings</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="alarm">アラーム設定 <small>Alarms</small></button>
+      </div>
+      <div class="tabpane" id="tabVent">
+        <div class="modes" id="modeButtons" role="radiogroup" aria-label="換気モード"></div>
+        <div class="params" id="params"></div>
+        <div class="derived" id="derived"></div>
+      </div>
+      <div class="tabpane" id="tabAlarm" hidden>
+        <div class="params" id="alarmParams"></div>
+        <div class="derived">Pmax に達すると吸気は打ち切られます（圧制限）。無呼吸時間は CPAP/PSV のバックアップ換気開始時間も兼ねます。</div>
+      </div>
+    </section>
+    </div>
+  <div class="col col-side">
+    <section class="panel meas" aria-label="実測値">
+      <div class="panel-h">実測値 <small>Monitoring</small></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="maneuvers">
+        <button class="btn" id="btnInspHold" data-help="insphold">吸気ホールド</button>
+        <button class="btn" id="btnExpHold" data-help="exphold">呼気ホールド</button>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+      <div class="panel-h">非同調 <small>直近 2 分</small></div>
+      <div class="async" id="asyncPanel"></div>
+    </section>
+    <section class="panel bga" aria-label="血液ガス">
+      <div class="panel-h">血液ガス <small>推定値</small></div>
+      <div class="bga-live" id="bgaLive"></div>
+      <div class="bga-actions"><button class="btn" id="btnAbg" data-help="abg">血液ガス採取</button></div>
+      <div class="bga-table" id="bgaTable"></div>
+    </section>
+      <section class="panel patient" aria-label="患者">
+      <div class="panel-h">患者モデル <small>Patient</small></div>
+      <div class="subh">病態プリセット</div>
+      <div class="chips" id="presets"></div>
+      <div class="subh">体格 <span class="pbw" id="pbw"></span></div>
+      <div class="body-row" id="bodyRow"></div>
+      <div class="subh">呼吸力学・自発呼吸</div>
+      <div class="sliders" id="patientSliders"></div>
+      <div class="subh">ガス交換</div>
+      <div class="sliders" id="gasSliders"></div>
+      <div class="subh">急変イベント <button class="btn small" id="btnClearEv">すべて解除</button></div>
+      <div class="chips events" id="events"></div>
+      <div class="mask" id="patientMask" hidden><div><b>シナリオ中</b><br>患者パラメータは判定後に表示されます</div></div>
+    </section>
+    </div>
+
+
+
+
+</main>
+
+<footer class="foot">教育用シミュレーションです。単一コンパートメントモデルによる簡略化を含み、実際の臨床判断には使用しないでください。</footer>
+
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<dialog class="scen-dialog" id="scenDialog" aria-label="シナリオ一覧">
+  <div class="sd-head">
+    <div><b>シナリオ</b> <span class="sd-sum" id="scenSummary"></span></div>
+    <button class="btn icon" id="scenClose" aria-label="閉じる">✕</button>
+  </div>
+  <div class="sd-list" id="scenList"></div>
+  <div class="sd-foot">
+    <span>学習記録はこの端末のブラウザにのみ保存されます。</span>
+    <button class="btn small" id="scenReset">記録をリセット</button>
+  </div>
+</dialog>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
