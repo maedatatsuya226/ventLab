@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="css/style.css">
 <script>
   try { const t = localStorage.getItem('vs-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  try { const v = localStorage.getItem('vs-vendor'); if (v) document.documentElement.dataset.vendor = v; } catch (e) {}
 </script>
 </head>
 <body>
@@ -22,6 +23,7 @@
   </div>
   <div class="mode-chip" id="modeChip" data-help="mode"></div>
   <div class="top-actions">
+    <label class="sel" data-help="vendor"><span>表示</span><select id="selVendor" aria-label="表示スタイル"></select></label>
     <button class="btn on" id="btnScen">シナリオ</button>
     <button class="btn icon" id="btnRun" title="一時停止 / 再開" aria-label="一時停止">❚❚</button>
     <label class="sel"><span>速度</span>
@@ -47,9 +49,15 @@
           <button class="btn small toggle" id="btnSound" aria-pressed="false" data-help="sound">警報音</button>
         </div>
       </div>
-      <div class="wave"><canvas id="cvPaw"></canvas></div>
-      <div class="wave"><canvas id="cvFlow"></canvas></div>
-      <div class="wave"><canvas id="cvVol"></canvas></div>
+      <div class="monitor">
+        <div class="mmp" id="mmp" aria-label="主要モニタリング値"></div>
+        <div class="wavecol">
+          <div class="wave"><canvas id="cvPaw"></canvas></div>
+          <div class="wave"><canvas id="cvFlow"></canvas></div>
+          <div class="wave"><canvas id="cvVol"></canvas></div>
+        </div>
+        <div class="mainctl" id="mainCtl" aria-label="主要設定"></div>
+      </div>
       <div class="legend" data-help="segbar">
         <span><i class="sw mand"></i>強制</span>
         <span><i class="sw assist"></i>補助（患者トリガー）</span>

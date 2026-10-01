@@ -88,7 +88,8 @@ export class SweepChart {
       const a = niceCeil(Math.max(40, Math.abs(mn), Math.abs(mx)) * 1.1);
       this.lo = -a; this.hi = a;
     } else if (k === 'paw') {
-      this.hi = niceCeil(Math.max(20, mx * 1.1));
+      const lim = typeof this.o.limit === 'function' ? this.o.limit() : 0;
+      this.hi = niceCeil(Math.max(20, mx * 1.1, lim * 1.05));
       this.lo = mn < -4 ? -niceCeil(-mn * 1.1) : -5;
     } else {
       this.hi = niceCeil(Math.max(300, mx * 1.1));
@@ -149,6 +150,15 @@ export class SweepChart {
       }
       ctx.stroke(); ctx.setLineDash([]);
     };
+    // 上限圧アラーム（Pressure ↑）の線
+    if (typeof this.o.limit === 'function') {
+      const lv = this.o.limit();
+      if (lv <= this.hi) {
+        const yy = Math.round(y(lv)) + 0.5;
+        ctx.strokeStyle = cssVar('--alarm'); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+      }
+    }
     if (this.showOverlay) line(this.over, cssVar(this.o.overlayColor), [4, 3], 1.5);
     line(this.data, cssVar(this.o.color), [], 2);
 

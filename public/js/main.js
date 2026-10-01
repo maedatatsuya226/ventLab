@@ -2,14 +2,17 @@ import { Simulator, MODES, EVENTS, ASYNC, ASYNC_KEYS, pbw } from './engine.js';
 import { SweepChart, LoopChart } from './charts.js';
 import { LungView } from './lung.js';
 import { HELP } from './help.js';
-import { AlarmSystem } from './alarms.js';
+import { AlarmSystem, ALARM_DEFS } from './alarms.js';
 import { GasModel } from './gas.js';
 import { SCENARIOS, ScenarioRunner, GAS, loadRecords, resetRecords } from './scenarios.js';
 import { defaultSettings } from './engine.js';
+import { VENDORS, vendor, vendorKey, setVendor, term, fmtIE } from './vendor.js';
+import { LsfMonitor } from './lsf.js';
 
 const sim = new Simulator();
 const alarms = new AlarmSystem(sim);
 const gas = new GasModel(sim);
+const lsf = new LsfMonitor();
 const $ = id => document.getElementById(id);
 
 // ---------------- 設定パラメータ定義 ----------------
@@ -69,6 +72,11 @@ const PATIENT = {
   leak:   { label: 'Leak',   jp: 'リーク',           unit: 'L/min',     min: 0,   max: 40,  step: 1 },
 };
 
+// 表示スタイルによる上書きを反映した定義
+const pdef = k => ({ ...PARAMS[k], ...vendor().params?.[k] });
+const adef = k => ({ ...ALARM_PARAMS[k], ...vendor().alarmParams?.[k] });
+const modeDef = key => ({ ...MODES[key], ...vendor().modes?.[key] });
+
 const fmt = (v, dec = 0) => v == null || !isFinite(v) ? '--' : v.toFixed(dec);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const roundStep = (v, st) => Math.round(v / st) * st;
@@ -94,13 +102,13 @@ function hideTip() { tip.hidden = true; }
 document.addEventListener('pointerover', e => {
   if (e.pointerType !== 'mouse') return;
   const t = e.target.closest('[data-help]');
-  if (t) showTip(t, HELP[t.dataset.help]); else hideTip();
+  if (t) showTip(t, term(HELP[t.dataset.help])); else hideTip();
 });
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-help]');
   if (!t || e.pointerType === 'mouse') return;
   if (e.target.closest('button:not([data-help]), input, select')) return;
-  showTip(t, HELP[t.dataset.help]);
+  showTip(t, term(HELP[t.dataset.help]));
   clearTimeout(tipTimer);
   tipTimer = setTimeout(hideTip, 5000);
 });
@@ -115,28 +123,51 @@ const lpPV = new LoopChart($('cvPV'), { xKey: 'paw', yKey: 'vol', title: 'P-V', 
 const lpFV = new LoopChart($('cvFV'), { xKey: 'vol', yKey: 'flow', title: 'F-V', xLabel: 'Vol mL', yLabel: 'Flow L/min', color: '--flow', symY: true, xMinSpan: 300 });
 const loops = [lpPV, lpFV];
 const lung = new LungView($('lungBox'));
+const chartBase = new Map([[chPaw, 'paw'], [chFlow, 'flow'], [chVol, 'vol'], [lpPV, 'pv'], [lpFV, 'fv']].map(([c, k]) => [c, { k, o: { ...c.o } }]));
+function applyChartLabels() {
+  for (const [c, b] of chartBase) {
+    const v = vendor().charts?.[b.k];
+    c.o = { ...b.o, ...v, limit: v?.limit ? () => sim.settings.pmax : null };
+  }
+}
+
+// Dynamic Lung 風の呼吸力学表示（Hamilton 表示のみ）
+const dlInfo = document.createElement('div');
+dlInfo.className = 'dl-info';
+$('lungBox').appendChild(dlInfo);
+let dlCache = '';
+function updateDynLung() {
+  if (vendorKey() !== 'hamilton') return;
+  const html = `<div class="dl-h">${sim.patient.sex === 'F' ? 'Female' : 'Male'} ${sim.patient.height} cm</div>
+    <div data-help="h_rinsp"><span>Rinsp</span><b>${fmt(lsf.rinsp, 0)}</b><small>cmH2O/(l/s)</small></div>
+    <div data-help="h_cstat"><span>Cstat</span><b>${fmt(lsf.cstat, 0)}</b><small>ml/cmH2O</small></div>
+    <div data-help="h_rcexp"><span>RCexp</span><b>${fmt(lsf.rcexp, 2)}</b><small>s</small></div>`;
+  if (html !== dlCache) { dlInfo.innerHTML = html; dlCache = html; }
+}
 
 // ---------------- 換気モード ----------------
 function renderModes() {
   const host = $('modeButtons');
   host.innerHTML = '';
   for (const key of Object.keys(MODES)) {
+    const md = modeDef(key);
     const b = document.createElement('button');
     b.className = 'btn' + (sim.settings.mode === key ? ' on' : '');
-    b.textContent = MODES[key].name;
+    b.textContent = md.name;
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', sim.settings.mode === key);
-    b.title = MODES[key].jp;
+    b.title = md.jp;
     b.onclick = () => { sim.setSettings({ mode: key }); renderModes(); renderParams(); };
     host.appendChild(b);
   }
   updateModeChip();
+  renderMainControls();
 }
 let chipCache = '';
 function updateModeChip() {
-  const m = MODES[sim.settings.mode];
+  const m = modeDef(sim.settings.mode);
   const html = sim.backup
-    ? `${m.name} → <span style="color:var(--warn)">バックアップ換気</span><small>無呼吸のため PC 強制換気中</small>`
+    ? `${m.name} → <span style="color:var(--warn)">${vendor().backupName || 'バックアップ換気'}</span><small>無呼吸のため PC 強制換気中</small>`
     : `${m.name}<small>${m.jp}</small>`;
   if (html !== chipCache) { $('modeChip').innerHTML = html; chipCache = html; }
   $('btnInspHold').disabled = !sim.mode.mand;
@@ -167,7 +198,7 @@ function numberCard(key, def, get, set) {
     <input type="range" min="${def.min}" max="${def.max}" step="${def.step}" aria-label="${def.label}">`;
   const n = card.querySelector('.n'), range = card.querySelector('input');
   const [dn, up] = card.querySelectorAll('.pm');
-  const refresh = () => { const v = get(); n.textContent = fmt(v, def.dec || 0); range.value = v; };
+  const refresh = () => { const v = get(); n.textContent = fmt(v * (def.scale || 1), def.dec || 0); range.value = v; };
   const apply = v => { set(+clamp(roundStep(v, def.step), def.min, def.max).toFixed(3)); refresh(); updateDerived(); };
   repeatButton(dn, () => apply(get() - def.step));
   repeatButton(up, () => apply(get() + def.step));
@@ -202,25 +233,29 @@ function renderParams() {
   for (const key of MODE_PARAMS[s.mode]) {
     if (key.startsWith('bk:')) {
       const k = key.slice(3);
-      const def = { ...PARAMS[k], jp: 'バックアップ ' + PARAMS[k].jp };
+      const base = pdef(k);
+      const def = { ...base, jp: 'バックアップ ' + base.jp };
       host.appendChild(numberCard(k, def, () => sim.settings[k], v => sim.setSettings({ [k]: v })));
     } else if (PARAMS[key]) {
-      host.appendChild(numberCard(key, PARAMS[key], () => sim.settings[key], v => sim.setSettings({ [key]: v })));
+      host.appendChild(numberCard(key, pdef(key), () => sim.settings[key], v => sim.setSettings({ [key]: v })));
     } else if (key === 'flow') {
-      host.appendChild(segCard('flow', 'Flow', '流量波形', [['square', '矩形波'], ['decel', '漸減波']],
+      const fv = vendor().flow;
+      host.appendChild(segCard('flow', fv?.label || 'Flow', '流量波形',
+        [['square', fv?.options.square || '矩形波'], ['decel', fv?.options.decel || '漸減波']],
         () => sim.settings.flowPattern, v => sim.setSettings({ flowPattern: v }), updateDerived));
     } else if (key === 'trig') {
+      const tv = vendor().trig;
       const wrap = document.createElement('div');
       wrap.style.display = 'contents';
       const draw = () => {
         wrap.innerHTML = '';
-        wrap.appendChild(segCard('trig', 'Trigger', 'トリガー方式', [['flow', 'フロー'], ['pressure', '圧']],
+        wrap.appendChild(segCard('trig', tv?.label || 'Trigger', 'トリガー方式', [['flow', 'フロー'], ['pressure', '圧']],
           () => sim.settings.trigType, v => { sim.setSettings({ trigType: v }); draw(); }));
         const isFlow = sim.settings.trigType === 'flow';
         const k = isFlow ? 'ftrig' : 'ptrig';
         const def = isFlow
-          ? { label: 'Trig', jp: 'フロートリガー感度', unit: 'L/min', min: 0.5, max: 15, step: 0.5, dec: 1 }
-          : { label: 'Trig', jp: '圧トリガー感度', unit: 'cmH₂O', min: 0.5, max: 15, step: 0.5, dec: 1 };
+          ? { label: 'Trig', jp: 'フロートリガー感度', unit: 'L/min', min: 0.5, max: 15, step: 0.5, dec: 1, ...tv?.flow }
+          : { label: 'Trig', jp: '圧トリガー感度', unit: 'cmH₂O', min: 0.5, max: 15, step: 0.5, dec: 1, ...tv?.pressure };
         wrap.appendChild(numberCard('trig', def, () => sim.settings[k], v => sim.setSettings({ [k]: v })));
       };
       draw();
@@ -233,8 +268,8 @@ function renderParams() {
 function renderAlarmParams() {
   const host = $('alarmParams');
   host.innerHTML = '';
-  for (const [k, def] of Object.entries(ALARM_PARAMS)) {
-    host.appendChild(numberCard(k, def, () => sim.settings[k], v => sim.setSettings({ [k]: v })));
+  for (const k of Object.keys(ALARM_PARAMS)) {
+    host.appendChild(numberCard(k, adef(k), () => sim.settings[k], v => sim.setSettings({ [k]: v })));
   }
 }
 document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => {
@@ -269,7 +304,7 @@ function updateDerived() {
     const perKg = s.vt / kg;
     parts.push(`VT/PBW <b class="${perKg > 8 ? 'warn' : ''}">${fmt(perKg, 1)} mL/kg</b>`);
   }
-  $('derived').innerHTML = parts.map(p => `<span>${p}</span>`).join('');
+  $('derived').innerHTML = term(parts.map(p => `<span>${p}</span>`).join(''));
 }
 
 // ---------------- 患者パネル ----------------
@@ -374,7 +409,7 @@ const TILES = [
   { k: 'mve',   label: 'MVe',    jp: '分時換気量',   unit: 'L/min',  cls: 'vol',     help: 'm_mve',   dec: 1 },
   { k: 'rr',    label: 'RR',     jp: '総呼吸数',     unit: '/min',   cls: 'flow',    help: 'm_rr',    dec: 0 },
   { k: 'rrSpont', label: 'RRspn', jp: '自発',        unit: '/min',   cls: 'flow',    help: 'm_rrs',   dec: 0 },
-  { k: 'ie',    label: 'I:E',    jp: '',             unit: '',       cls: 'flow',    help: 'm_ie',    dec: 1, fmt: v => v == null ? '--' : '1:' + v.toFixed(1) },
+  { k: 'ie',    label: 'I:E',    jp: '',             unit: '',       cls: 'flow',    help: 'm_ie',    dec: 1, fmt: fmtIE },
   { k: 'pmean', label: 'Pmean',  jp: '平均気道内圧', unit: 'cmH₂O',  cls: 'paw',     help: 'm_pmean', dec: 0 },
   { k: 'dp',    label: 'ΔP',     jp: 'Driving',      unit: 'cmH₂O',  cls: 'paw',     help: 'm_dp',    dec: 0, stale: 'pplatAt' },
   { k: 'cstat', label: 'Cstat',  jp: '',             unit: 'mL/cmH₂O', cls: '',      help: 'm_cstat', dec: 0, stale: 'pplatAt' },
@@ -383,10 +418,20 @@ const TILES = [
   { k: 'ti',    label: 'Ti',     jp: '実測',         unit: 's',      cls: '',        help: 'm_ti',    dec: 2 },
   { k: 'rsbi',  label: 'RSBI',   jp: '',             unit: '/min/L', cls: '',        help: 'm_rsbi',  dec: 0 },
 ];
-const tileEls = {};
+let tileEls = {};
+const tileDefs = () => vendor().tiles || TILES;
+// 実測値の取り出し（src: 'lsf' は呼吸ごとの LSF 推定値）
+function measValue(t) {
+  if (t.src === 'lsf') return lsf[t.k];
+  if (t.k === 'mve') return sim.liveMve();
+  if (t.k === 'fio2') return sim.settings.fio2;
+  return sim.meas[t.k];
+}
 function renderTiles() {
   const host = $('tiles');
-  for (const t of TILES) {
+  host.innerHTML = '';
+  tileEls = {};
+  for (const t of tileDefs()) {
     const d = document.createElement('div');
     d.className = 'tile ' + t.cls;
     d.dataset.help = t.help;
@@ -397,20 +442,117 @@ function renderTiles() {
 }
 function updateTiles() {
   const m = sim.meas;
-  for (const t of TILES) {
+  for (const t of tileDefs()) {
     const el = tileEls[t.k];
-    const val = t.k === 'mve' ? sim.liveMve() : m[t.k];
+    const val = measValue(t);
     const str = t.fmt ? t.fmt(val) : fmt(val, t.dec);
     if (str !== el.cache) { el.v.textContent = str; el.cache = str; }
     if (t.stale) el.v.classList.toggle('stale', m[t.stale] < 0 || sim.t - m[t.stale] > 60);
   }
   const pip = m.pip ?? 0;
-  tileEls.pip.root.classList.toggle('alarm', pip >= sim.settings.pmax - 0.5);
-  tileEls.pip.root.classList.toggle('warn', pip >= 35 && pip < sim.settings.pmax - 0.5);
-  tileEls.pplat.root.classList.toggle('warn', (m.pplat ?? 0) > 30);
-  tileEls.dp.root.classList.toggle('warn', (m.dp ?? 0) > 15);
-  tileEls.autoPeep.root.classList.toggle('warn', (m.autoPeep ?? 0) >= 2);
-  tileEls.rsbi.root.classList.toggle('warn', (m.rsbi ?? 0) > 105);
+  const autoPeep = tileDefs().find(t => t.k === 'autoPeep')?.src === 'lsf' ? lsf.autoPeep : m.autoPeep;
+  tileEls.pip?.root.classList.toggle('alarm', pip >= sim.settings.pmax - 0.5);
+  tileEls.pip?.root.classList.toggle('warn', pip >= 35 && pip < sim.settings.pmax - 0.5);
+  tileEls.pplat?.root.classList.toggle('warn', (m.pplat ?? 0) > 30);
+  tileEls.dp?.root.classList.toggle('warn', (m.dp ?? 0) > 15);
+  tileEls.autoPeep?.root.classList.toggle('warn', (autoPeep ?? 0) >= 2);
+  tileEls.rsbi?.root.classList.toggle('warn', (m.rsbi ?? 0) > 105);
+}
+
+// ---------------- 主要モニタリング値（Hamilton 表示：波形の左に常時表示） ----------------
+// 各値の左に アラーム上限（上）・下限（下）を小さく表示。下限のないものは Off
+let mmpEls = [];
+const MMP_ALARMS = { pip: ['pmax', 'plow'], mve: ['mveHigh', 'mveLow'], vte: ['vteHigh', 'vteLow'], rr: ['rrHigh'] };
+function renderMmp() {
+  const host = $('mmp');
+  host.innerHTML = '';
+  mmpEls = (vendor().mmp || []).map(t => {
+    const d = document.createElement('div');
+    d.className = 'mmp-item';
+    d.innerHTML = `<div class="lim"><span class="hi"></span><span class="lo"></span></div>
+      <div class="main"><div class="v">--</div><div class="k">${t.label}<br><span>${t.unit}</span></div></div>`;
+    host.appendChild(d);
+    return { t, root: d, v: d.querySelector('.v'), hi: d.querySelector('.hi'), lo: d.querySelector('.lo'), cache: '' };
+  });
+}
+function updateMmp() {
+  const s = sim.settings, act = new Set(alarms.list().filter(a => a.active).map(a => a.id));
+  for (const el of mmpEls) {
+    const t = el.t, val = measValue(t);
+    const str = t.fmt ? t.fmt(val) : fmt(val, t.dec || 0);
+    if (str !== el.cache) { el.v.textContent = str; el.cache = str; }
+    const lim = (k, dec) => k ? fmt(s[k], dec) : 'Off';
+    if (t.hi !== undefined) {
+      el.hi.textContent = lim(t.hi, t.hiDec || 0);
+      el.lo.textContent = lim(t.lo, t.hiDec || 0);
+    }
+    const ids = MMP_ALARMS[t.k] || [];
+    const lvl = ids.map(id => act.has(id) ? ALARM_DEFS[id].level : null);
+    el.root.classList.toggle('alarm', lvl.includes('high'));
+    el.root.classList.toggle('warn', !lvl.includes('high') && lvl.includes('medium'));
+  }
+}
+
+// ---------------- 主要設定ボタン（Hamilton 表示：画面右の丸いボタン） ----------------
+// タップで選択（オレンジ）→ ＋／− またはホイールで調整 → もう一度タップで確定
+let ctlActive = null, ctlEls = [];
+function renderMainControls() {
+  const host = $('mainCtl');
+  host.innerHTML = '';
+  ctlEls = [];
+  const keys = vendor().mainControls?.[sim.settings.mode];
+  if (!keys) return;
+  if (!keys.includes(ctlActive)) ctlActive = null;
+  for (const k of keys) {
+    const def = pdef(k);
+    const b = document.createElement('button');
+    b.className = 'rc' + (ctlActive === k ? ' active' : '');
+    b.dataset.help = k;
+    b.innerHTML = `<span class="rc-dial"><b></b><small>${def.unit}</small></span><span class="rc-l">${def.label}</span>`;
+    b.onclick = () => { ctlActive = ctlActive === k ? null : k; renderMainControls(); };
+    b.addEventListener('wheel', e => { if (ctlActive !== k) return; e.preventDefault(); stepParam(k, e.deltaY < 0 ? 1 : -1); }, { passive: false });
+    host.appendChild(b);
+    ctlEls.push({ k, def, v: b.querySelector('b'), cache: '' });
+  }
+  const adj = document.createElement('div');
+  adj.className = 'rc-adj';
+  adj.hidden = !ctlActive;
+  adj.innerHTML = '<button class="pm" aria-label="下げる">−</button><button class="pm" aria-label="上げる">＋</button>';
+  const [dn, up] = adj.querySelectorAll('button');
+  repeatButton(dn, () => ctlActive && stepParam(ctlActive, -1));
+  repeatButton(up, () => ctlActive && stepParam(ctlActive, 1));
+  host.appendChild(adj);
+  const nav = document.createElement('div');
+  nav.className = 'rc-nav';
+  nav.innerHTML = '<button class="btn small" data-go="vent">Controls</button><button class="btn small" data-go="alarm">Alarms</button>';
+  nav.querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+    document.querySelector(`.tab[data-tab="${b.dataset.go}"]`).click();
+    document.querySelector('.settings').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  host.appendChild(nav);
+}
+function stepParam(k, dir) {
+  const def = PARAMS[k];
+  const v = +clamp(roundStep(sim.settings[k] + dir * def.step, def.step), def.min, def.max).toFixed(3);
+  sim.setSettings({ [k]: v });
+  renderParams();
+}
+function updateMainControls() {
+  for (const el of ctlEls) {
+    const str = fmt(sim.settings[el.k] * (el.def.scale || 1), el.def.dec || 0);
+    if (str !== el.cache) { el.v.textContent = str; el.cache = str; }
+  }
+}
+
+// 掃引時間の選択肢（Hamilton は 7 / 14 / 21 / 28 秒）
+function renderSweeps() {
+  const sel = $('selWin');
+  const opts = vendor().sweeps || [6, 10, 20];
+  const cur = charts[0].win;
+  const pick = opts.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a);
+  sel.innerHTML = opts.map(s => `<option value="${s}">${s} 秒</option>`).join('');
+  sel.value = pick;
+  if (pick !== cur) charts.forEach(c => c.setWindow(pick));
 }
 
 // ---------------- 操作ボタン ----------------
@@ -447,6 +589,7 @@ function updateStatus() {
   if (sim.phase === 'pause' && sim.breath?.hold) msg = '吸気ホールド中… 流量ゼロで肺胞内圧と気道内圧が平衡します';
   else if (sim.phase === 'exphold') msg = '呼気ホールド中… 呼気弁を閉じて総 PEEP を測定しています';
   else if (performance.now() < statusUntil) msg = statusMsg;
+  msg = term(msg);
   if (sim.holdReq.insp || sim.holdReq.exp || sim.phase === 'exphold' || sim.breath?.hold && sim.phase === 'pause') {
     $('btnInspHold').classList.toggle('pending', sim.holdReq.insp || (sim.breath?.hold && sim.phase === 'pause'));
     $('btnExpHold').classList.toggle('pending', sim.holdReq.exp || sim.phase === 'exphold');
@@ -482,7 +625,10 @@ let alarmCache = '';
 function updateAlarmBar() {
   const list = alarms.list();
   const html = list.length
-    ? list.map(a => `<span class="al ${a.level}${a.active ? ' active' : ' latched'}" title="${a.hint}">${a.jp}</span>`).join('')
+    ? list.map(a => {
+      const name = vendor().alarms?.[a.id];
+      return `<span class="al ${a.level}${a.active ? ' active' : ' latched'}" title="${name ? a.jp + '：' : ''}${a.hint}">${name || a.jp}</span>`;
+    }).join('')
     : '<span class="ok">アラームなし</span>';
   if (html !== alarmCache) { $('alarmList').innerHTML = html; alarmCache = html; }
   const left = alarms.silenceLeft();
@@ -564,6 +710,7 @@ function resetSim() {
   abgLog.length = 0; renderAbg();
   charts.forEach(c => c.setWindow(c.win));
   loops.forEach(l => { l.cur = []; l.prev = []; l.ref = null; });
+  lsf.reset();
   pendingMarkers = [];
 }
 function setMask(on) { $('patientMask').hidden = !on; }
@@ -578,7 +725,7 @@ function defaultsForScenario() {
   return d;
 }
 const runner = new ScenarioRunner({
-  sim, gas, host: $('scenarioHost'), fastForward,
+  sim, gas, host: $('scenarioHost'), fastForward, term,
   onStart: ({ settings, patient, gas: g }) => {
     sim.clearEvents();
     sim.setSettings({ ...defaultsForScenario(), ...settings });
@@ -603,8 +750,8 @@ function renderScenList() {
     const r = rec[s.id];
     return `<div class="sd-card">
       <div class="row"><span class="sc-cat">${s.cat}・${s.level}</span><span class="rec ${r ? '' : 'none'}">${r ? `ベスト <b>${r.best}</b> 点・${r.attempts} 回` : '未実施'}</span></div>
-      <div class="t">${s.title}</div>
-      <div class="d">${s.brief}</div>
+      <div class="t">${term(s.title)}</div>
+      <div class="d">${term(s.brief)}</div>
       <div class="row"><span></span><button class="btn on small" data-start="${s.id}">開始</button></div>
     </div>`;
   }).join('');
@@ -639,10 +786,12 @@ function frame(now) {
       if (mk.async) chPaw.asyncMark(mk.t, ASYNC_KEYS.indexOf(mk.async) + 1);
       else {
         loops.forEach(l => l.newBreath());
+        lsf.endBreath(sim.settings.peep);
         if (mk.triggered) chPaw.mark(mk.t, 1);
       }
     }
     loops.forEach(l => l.push(sm));
+    lsf.push(sm);
   }
   pendingMarkers = mks.slice(mi);
   scaleTimer += dt;
@@ -656,6 +805,9 @@ function frame(now) {
   updateEffective();
   updateModeChip();
   updateTiles();
+  updateMmp();
+  updateMainControls();
+  updateDynLung();
   updateBgaLive();
   checkManeuverResults();
   updateStatus();
@@ -665,10 +817,33 @@ function frame(now) {
 // シナリオ等で設定・患者を外部から変更したときに画面を同期する
 export function syncUI() { renderModes(); renderParams(); renderPatient(); if (!$('tabAlarm').hidden) renderAlarmParams(); }
 
+// ---------------- 表示スタイル（汎用 / Hamilton） ----------------
+function applyVendor(key) {
+  setVendor(key);
+  applyChartLabels();
+  renderModes();
+  renderParams();
+  if (!$('tabAlarm').hidden) renderAlarmParams();
+  renderTiles();
+  renderMmp();
+  renderSweeps();
+  dlCache = ''; dlInfo.innerHTML = '';
+  alarmCache = ''; chipCache = '';
+  if (runner.active) runner.render();
+}
+const selVendor = $('selVendor');
+selVendor.innerHTML = Object.entries(VENDORS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
+selVendor.value = vendorKey();
+selVendor.onchange = e => applyVendor(e.target.value);
+
+setVendor(vendorKey());
+applyChartLabels();
 renderModes();
 renderParams();
 renderPatient();
 renderTiles();
+renderMmp();
+renderSweeps();
 renderBgaLive();
 renderAbg();
 requestAnimationFrame(frame);

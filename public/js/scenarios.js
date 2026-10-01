@@ -249,8 +249,8 @@ export function resetRecords() { try { localStorage.removeItem(KEY); } catch (e)
 
 // ---- 実行 ----
 export class ScenarioRunner {
-  constructor({ sim, gas, onStart, onEnd, fastForward, host }) {
-    Object.assign(this, { sim, gas, onStart, onEnd, fastForward, host });
+  constructor({ sim, gas, onStart, onEnd, fastForward, host, term = s => s }) {
+    Object.assign(this, { sim, gas, onStart, onEnd, fastForward, host, term });
     this.cur = null;
   }
 
@@ -286,7 +286,7 @@ export class ScenarioRunner {
     return { sim, m: sim.meas, s: sim.settings, g: this.gas.values(), kg: pbw(sim.patient) };
   }
 
-  resolve(v) { return typeof v === 'function' ? v(this.cur.variant) : v; }
+  resolve(v) { return this.term(typeof v === 'function' ? v(this.cur.variant) : v); }
 
   answer(ti, oi) {
     const c = this.cur;
@@ -342,7 +342,7 @@ export class ScenarioRunner {
   }
 
   render() {
-    const c = this.cur, sc = c.sc, h = this.host;
+    const c = this.cur, sc = c.sc, h = this.host, T = this.term;
     h.hidden = false;
     const quizHtml = (t, i) => {
       const ans = c.answers[i];
@@ -350,33 +350,33 @@ export class ScenarioRunner {
       const opts = t.options.map((o, oi) => {
         let cls = 'opt';
         if (ans != null) cls += oi === correct ? ' right' : (oi === ans ? ' wrong' : ' dim');
-        return `<button class="${cls}" data-q="${i}" data-o="${oi}" ${ans != null ? 'disabled' : ''}>${o}</button>`;
+        return `<button class="${cls}" data-q="${i}" data-o="${oi}" ${ans != null ? 'disabled' : ''}>${T(o)}</button>`;
       }).join('');
       const exp = ans != null
         ? `<div class="explain ${ans === correct ? 'ok' : 'ng'}"><b>${ans === correct ? '正解' : '不正解'}</b> ${this.resolve(t.explain)}</div>` : '';
-      return `<div class="task quiz"><div class="tq">Q. ${t.q}</div><div class="opts">${opts}</div>${exp}</div>`;
+      return `<div class="task quiz"><div class="tq">Q. ${T(t.q)}</div><div class="opts">${opts}</div>${exp}</div>`;
     };
     const goals = sc.tasks.map((t, i) => t.type === 'goal'
-      ? `<li data-goal="${i}"><span class="gi"></span><span class="gl">${t.label}</span><span class="gv">--</span></li>` : '').join('');
+      ? `<li data-goal="${i}"><span class="gi"></span><span class="gl">${T(t.label)}</span><span class="gv">--</span></li>` : '').join('');
     let result = '';
     if (c.done) {
       const r = c.result;
       result = `<div class="result">
         <div class="score"><b>${r.score}</b> 点</div>
-        <ul class="rlist">${r.detail.map(d => `<li class="${d.ok ? 'ok' : 'ng'}"><span class="gi"></span>${d.label}${d.value ? `（${d.value}）` : ''}</li>`).join('')}</ul>
+        <ul class="rlist">${r.detail.map(d => `<li class="${d.ok ? 'ok' : 'ng'}"><span class="gi"></span>${T(d.label)}${d.value ? `（${d.value}）` : ''}</li>`).join('')}</ul>
         <div class="debrief"><b>解説</b> ${this.resolve(sc.debrief)}</div>
       </div>`;
     }
     h.innerHTML = `
       <div class="sc-head">
-        <div><span class="sc-cat">${sc.cat}・${sc.level}</span><b class="sc-title">${sc.title}</b></div>
+        <div><span class="sc-cat">${sc.cat}・${sc.level}</span><b class="sc-title">${T(sc.title)}</b></div>
         <div class="sc-actions">
           ${c.done ? '' : '<button class="btn small" data-act="hint">ヒント</button><button class="btn small" data-act="ff">早送り 60 秒</button>'}
           <button class="btn small" data-act="end">${c.done ? '閉じる' : '中止'}</button>
         </div>
       </div>
-      <div class="sc-brief">${sc.brief}</div>
-      ${c.hintShown && !c.done ? `<div class="sc-hint"><b>ヒント</b> ${sc.hint}</div>` : ''}
+      <div class="sc-brief">${T(sc.brief)}</div>
+      ${c.hintShown && !c.done ? `<div class="sc-hint"><b>ヒント</b> ${T(sc.hint)}</div>` : ''}
       ${sc.tasks.map((t, i) => t.type === 'quiz' ? quizHtml(t, i) : '').join('')}
       ${goals && !c.done ? `<div class="task"><div class="tq">目標（設定を調整し、満たした状態で「判定」）</div><ul class="goals">${goals}</ul></div>` : ''}
       ${c.done ? result : `<div class="sc-foot"><span>患者パラメータはシナリオ終了まで非表示です。血液ガスは設定変更後しばらくして平衡に達します（早送りも可）。</span><button class="btn on" data-act="eval">判定</button></div>`}

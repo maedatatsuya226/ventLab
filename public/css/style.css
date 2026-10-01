@@ -49,6 +49,38 @@
   --shadow: none; color-scheme: dark;
 }
 
+/* Hamilton 表示の配色（HAMILTON-C3 の公開画像に寄せた近似）
+   ダーク = 実機に近い濃紺の画面・水色のボタン・Paw 黄 / Flow マゼンタ / Volume 緑。ライトは同じ色相の明るい版 */
+:root[data-vendor="hamilton"] {
+  --bg: #e6eaf7; --panel: #ffffff; --panel-2: #eef1fa; --border: #cbd2ec; --text: #121a4a; --muted: #586090;
+  --grid: #e3e7f4; --zero: #98a1c6; --accent: #1689b8;
+  --paw: #977a00; --flow: #b02a96; --vol: #1d9440; --pmus: #d9661a; --trigger: #d9661a;
+  --seg-mand: #8a91b8; --seg-assist: #1689b8; --seg-spont: #1d9440;
+  --mmp: #121a4a; --mmp-bg: #eef1fa;
+  --ctl: #55c8ee; --ctl-text: #0b1846; --ctl-select: #e8c900; --ctl-active: #ff9a1f; --ctl-active-text: #1a0e00;
+  --msg-yellow: #ffd83a; --dl-bg: #2456b8;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-vendor="hamilton"]:not([data-theme="light"]) {
+    --bg: #0b1036; --panel: #181f66; --panel-2: #10164e; --border: #36428f; --text: #ffffff; --muted: #aab3e4;
+    --grid: #242d78; --zero: #cdd3f3; --accent: #55c8ee;
+    --paw: #f2ecaa; --flow: #ec5fd0; --vol: #72e08a; --pmus: #ff9a3c; --trigger: #ff9a3c;
+    --seg-mand: #8d95c8; --seg-assist: #55c8ee; --seg-spont: #72e08a;
+    --warn: #ffd23f; --alarm: #ff4d4d; --warn-bg: #3a3410; --alarm-bg: #4a1020;
+    --mmp: #ffffff; --mmp-bg: #0e1446;
+    --ctl-select: #ffe94a; --dl-bg: #2251b5;
+  }
+}
+:root[data-vendor="hamilton"][data-theme="dark"] {
+  --bg: #0b1036; --panel: #181f66; --panel-2: #10164e; --border: #36428f; --text: #ffffff; --muted: #aab3e4;
+  --grid: #242d78; --zero: #cdd3f3; --accent: #55c8ee;
+  --paw: #f2ecaa; --flow: #ec5fd0; --vol: #72e08a; --pmus: #ff9a3c; --trigger: #ff9a3c;
+  --seg-mand: #8d95c8; --seg-assist: #55c8ee; --seg-spont: #72e08a;
+  --warn: #ffd23f; --alarm: #ff4d4d; --warn-bg: #3a3410; --alarm-bg: #4a1020;
+  --mmp: #ffffff; --mmp-bg: #0e1446;
+  --ctl-select: #ffe94a; --dl-bg: #2251b5;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
@@ -312,6 +344,65 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 22px; marg
 .sd-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
 @media (max-width: 520px) { .sd-list { grid-template-columns: 1fr; } .opts { grid-template-columns: 1fr; } }
 
+/* ---- monitor (waveforms + main monitoring parameters) ---- */
+.mmp, .mainctl, .dl-info { display: none; }
+
+/* ---- Hamilton display style ---- */
+:root[data-vendor="hamilton"] .monitor { display: grid; grid-template-columns: 150px minmax(0, 1fr) 100px; gap: 6px; }
+:root[data-vendor="hamilton"] .wavecol { min-width: 0; }
+:root[data-vendor="hamilton"] .legend { padding-left: 190px; }
+:root[data-vendor="hamilton"] .alarmbar { padding-left: 4px; }
+
+/* MMP：左に アラーム上限／下限、右に 大きな値と 名前・単位 */
+:root[data-vendor="hamilton"] .mmp { display: flex; flex-direction: column; background: var(--mmp-bg); border-radius: 6px; overflow: hidden; }
+.mmp-item { flex: 1; display: grid; grid-template-columns: auto 1fr; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); min-height: 0; }
+.mmp-item:last-child { border-bottom: none; }
+.mmp-item .lim { display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 2px 0; }
+.mmp-item .main { display: flex; flex-direction: column; justify-content: center; align-items: flex-end; min-width: 0; }
+.mmp-item .v { font-size: 30px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; color: var(--mmp); }
+.mmp-item .k { font-size: 11px; font-weight: 600; line-height: 1.2; text-align: right; color: var(--text); }
+.mmp-item .k span { font-weight: 400; color: var(--muted); font-size: 10px; }
+.mmp-item.warn .v { color: var(--warn); }
+.mmp-item.alarm .v { color: var(--alarm); }
+
+/* 主要設定：丸いボタン（タップで選択 → オレンジで調整中） */
+:root[data-vendor="hamilton"] .mainctl { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 4px 0; }
+.rc { background: none; border: none; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--text); touch-action: manipulation; }
+.rc-dial { width: 64px; height: 64px; border-radius: 50%; background: var(--ctl); color: var(--ctl-text); display: flex; flex-direction: column; align-items: center; justify-content: center; border: 3px solid transparent; transition: background .15s; }
+.rc-dial b { font-size: 20px; line-height: 1; font-variant-numeric: tabular-nums; }
+.rc-dial small { font-size: 9px; }
+.rc-l { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.rc:hover .rc-dial, .rc:focus-visible .rc-dial { border-color: var(--ctl-select); }
+.rc.active .rc-dial { background: var(--ctl-active); color: var(--ctl-active-text); border-color: var(--ctl-select); }
+.rc-adj { display: flex; gap: 6px; }
+.rc-adj[hidden] { display: none; }
+.rc-adj .pm { width: 40px; height: 34px; border-radius: 8px; border: 1px solid var(--ctl-active); background: var(--panel); font-size: 18px; cursor: pointer; touch-action: manipulation; user-select: none; }
+.rc-nav { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-top: auto; }
+.rc-nav .btn { background: var(--ctl); border-color: var(--ctl); color: var(--ctl-text); font-weight: 700; }
+
+/* 設定パネル・ボタン */
+:root[data-vendor="hamilton"] .btn.on, :root[data-vendor="hamilton"] .btn.toggle[aria-pressed="true"] { color: var(--ctl-text); }
+:root[data-vendor="hamilton"] .pcard .lbl b { color: var(--accent); }
+
+/* メッセージバー：高優先度 赤、中・低優先度 黄 */
+:root[data-vendor="hamilton"] .al.medium, :root[data-vendor="hamilton"] .al.low { background: var(--msg-yellow); border-color: var(--msg-yellow); color: #1a1600; }
+:root[data-vendor="hamilton"] .al.latched { background: transparent; color: var(--muted); border-color: var(--muted); }
+
+/* Dynamic Lung：青いパネルに白い肺、左に Rinsp / Cstat / RCexp */
+@media (min-width: 1181px) { :root[data-vendor="hamilton"] .lower { grid-template-columns: 1fr 1fr 300px; } }
+:root[data-vendor="hamilton"] .lungbox {
+  display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 4px;
+  background: var(--dl-bg); border-radius: 8px; padding: 6px; color: #fff;
+  --lung: #f3f6ff; --lung-stroke: #b9c8f5; --lung-warn: #ffd9a8; --lung-over: #ff9b9b; --chest: rgba(255,255,255,.35); --muted: #d4ddff; --vol: #ffe066; --panel-2: rgba(255,255,255,.12);
+}
+:root[data-vendor="hamilton"] .lungbox svg { grid-column: 2; grid-row: 1; max-height: 200px; }
+:root[data-vendor="hamilton"] .dl-info { display: flex; flex-direction: column; gap: 6px; grid-column: 1; grid-row: 1; }
+.dl-info .dl-h { font-size: 11px; font-weight: 700; }
+.dl-info > div:not(.dl-h) { display: flex; flex-direction: column; cursor: help; min-width: 0; line-height: 1.15; }
+.dl-info b { font-size: 20px; font-variant-numeric: tabular-nums; order: -1; }
+.dl-info span { font-size: 11px; font-weight: 600; }
+.dl-info small { font-size: 9px; opacity: .8; white-space: nowrap; }
+
 /* ---- responsive ---- */
 @media (max-width: 860px) { .col { display: contents; } }
 @media (max-width: 1180px) {
@@ -342,4 +433,14 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 22px; marg
   .lower { grid-template-columns: 1fr; }
   .brand-sub { display: none; }
   .modes .btn { min-width: 0; flex: 1 1 30%; }
+}
+@media (max-width: 620px) {
+  /* 狭い画面では MMP を波形の上、主要設定を波形の下に横並び */
+  :root[data-vendor="hamilton"] .monitor { grid-template-columns: minmax(0, 1fr); }
+  :root[data-vendor="hamilton"] .mmp { display: grid; grid-template-columns: repeat(3, 1fr); }
+  :root[data-vendor="hamilton"] .mmp-item { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+  :root[data-vendor="hamilton"] .mmp-item .v { font-size: 22px; }
+  :root[data-vendor="hamilton"] .mainctl { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  :root[data-vendor="hamilton"] .rc-nav { flex-direction: row; width: auto; margin-top: 0; }
+  :root[data-vendor="hamilton"] .legend { padding-left: 36px; }
 }
