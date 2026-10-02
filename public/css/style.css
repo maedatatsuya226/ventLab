@@ -290,6 +290,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 22px; marg
 .mask { position: absolute; inset: 34px 0 0; background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 13px; border-radius: 0 0 10px 10px; z-index: 2; }
 .mask b { color: var(--text); font-size: 15px; }
+.mask[hidden] { display: none; }
 
 /* ---- scenario panel ---- */
 .scenario { padding: 10px 14px 12px; border-color: var(--accent); }
@@ -388,20 +389,36 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 22px; marg
 :root[data-vendor="hamilton"] .al.medium, :root[data-vendor="hamilton"] .al.low { background: var(--msg-yellow); border-color: var(--msg-yellow); color: #1a1600; }
 :root[data-vendor="hamilton"] .al.latched { background: transparent; color: var(--muted); border-color: var(--muted); }
 
-/* Dynamic Lung：青いパネルに白い肺、左に Rinsp / Cstat / RCexp */
-@media (min-width: 1181px) { :root[data-vendor="hamilton"] .lower { grid-template-columns: 1fr 1fr 300px; } }
+/* Dynamic Lung：青いパネルに白い肺。左に Rinsp / Cstat / RCexp、右に SpO2 / PetCO2。全項目正常で緑の枠 */
+@media (min-width: 1181px) { :root[data-vendor="hamilton"] .lower { grid-template-columns: 1fr 1fr 340px; } }
 :root[data-vendor="hamilton"] .lungbox {
-  display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 4px;
-  background: var(--dl-bg); border-radius: 8px; padding: 6px; color: #fff;
-  --lung: #f3f6ff; --lung-stroke: #b9c8f5; --lung-warn: #ffd9a8; --lung-over: #ff9b9b; --chest: rgba(255,255,255,.35); --muted: #d4ddff; --vol: #ffe066; --panel-2: rgba(255,255,255,.12);
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) 64px; align-items: center; gap: 4px;
+  background: var(--dl-bg); border: 3px solid transparent; border-radius: 8px; padding: 6px; color: #fff;
+  --lung: #f3f6ff; --lung-stroke: #b9c8f5; --chest: rgba(255,255,255,.35); --muted: #d4ddff; --vol: #ffe066; --panel-2: rgba(255,255,255,.12);
 }
-:root[data-vendor="hamilton"] .lungbox svg { grid-column: 2; grid-row: 1; max-height: 200px; }
+:root[data-vendor="hamilton"] .lungbox.dl-ok { border-color: #3ddc6a; }
+:root[data-vendor="hamilton"] .lungbox svg { grid-column: 2; grid-row: 1; max-height: 210px; }
 :root[data-vendor="hamilton"] .dl-info { display: flex; flex-direction: column; gap: 6px; grid-column: 1; grid-row: 1; }
+:root[data-vendor="hamilton"] .dl-info.dl-side { grid-column: 3; align-items: flex-end; text-align: right; }
 .dl-info .dl-h { font-size: 11px; font-weight: 700; }
 .dl-info > div:not(.dl-h) { display: flex; flex-direction: column; cursor: help; min-width: 0; line-height: 1.15; }
+.dl-info.dl-side > div { align-items: flex-end; }
 .dl-info b { font-size: 20px; font-variant-numeric: tabular-nums; order: -1; }
+.dl-info .out b { color: #ffe066; }
 .dl-info span { font-size: 11px; font-weight: 600; }
 .dl-info small { font-size: 9px; opacity: .8; white-space: nowrap; }
+
+/* 気管支樹（Rinsp）：正常 = 太い白、やや高い = 細い黄、高い = さらに細い橙 */
+.lv-br path { fill: none; stroke: #8fb4ff; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; transition: stroke .3s, stroke-width .3s; }
+.lv-br.r-mod path { stroke: #ffd23f; stroke-width: 2; }
+.lv-br.r-high path { stroke: #ff8a3c; stroke-width: 1.2; }
+/* 肺の輪郭（Cstat）：硬い肺ほど輪郭が太く濃い */
+.lv-lung.c-vlow { stroke: #ff9b9b; stroke-width: 5; }
+.lv-lung.c-low { stroke: #ffc27a; stroke-width: 3.2; }
+.lv-lung.c-high { stroke-width: 1; stroke-dasharray: 4 3; }
+.lv-lung.deflated { opacity: .45; stroke-dasharray: 3 3; }
+.lv-lung.overinflated { fill: #ffe2c4; stroke: #ff8a3c; stroke-width: 3; }
+.lv-dia.trig { stroke: #ffe066; stroke-width: 5; transition: opacity .1s; }
 
 /* ---- responsive ---- */
 @media (max-width: 860px) { .col { display: contents; } }

@@ -1,6 +1,6 @@
 import { Simulator, MODES, EVENTS, ASYNC, ASYNC_KEYS, pbw } from './engine.js';
 import { SweepChart, LoopChart } from './charts.js';
-import { LungView } from './lung.js';
+import { LungView, cstatClass, rinspClass } from './lung.js';
 import { HELP } from './help.js';
 import { AlarmSystem, ALARM_DEFS } from './alarms.js';
 import { GasModel } from './gas.js';
@@ -131,18 +131,35 @@ function applyChartLabels() {
   }
 }
 
-// Dynamic Lung 風の呼吸力学表示（Hamilton 表示のみ）
+// Dynamic Lung（Hamilton 表示のみ）：左に Rinsp / Cstat / RCexp、右に SpO2 / PetCO2。
+// 実機のパネルにある Rinsp・Cstat・SpO2・PetCO2 がすべて正常範囲なら枠を緑にする
+// （境界値は一般的な目安。実機は身長から正常範囲を決める）。RCexp は色分けのみで枠の判定には使わない
 const dlInfo = document.createElement('div');
 dlInfo.className = 'dl-info';
-$('lungBox').appendChild(dlInfo);
+const dlSide = document.createElement('div');
+dlSide.className = 'dl-info dl-side';
+$('lungBox').append(dlInfo, dlSide);
 let dlCache = '';
 function updateDynLung() {
   if (vendorKey() !== 'hamilton') return;
-  const html = `<div class="dl-h">${sim.patient.sex === 'F' ? 'Female' : 'Male'} ${sim.patient.height} cm</div>
-    <div data-help="h_rinsp"><span>Rinsp</span><b>${fmt(lsf.rinsp, 0)}</b><small>cmH2O/(l/s)</small></div>
-    <div data-help="h_cstat"><span>Cstat</span><b>${fmt(lsf.cstat, 0)}</b><small>ml/cmH2O</small></div>
-    <div data-help="h_rcexp"><span>RCexp</span><b>${fmt(lsf.rcexp, 2)}</b><small>s</small></div>`;
-  if (html !== dlCache) { dlInfo.innerHTML = html; dlCache = html; }
+  const g = gas.values();
+  const spo2 = g.ready ? g.spo2 : null, etco2 = g.ready ? g.etco2 : null;
+  const rc = lsf.rcexp;
+  const ok = {
+    rinsp: rinspClass(lsf.rinsp) === 'normal',
+    cstat: cstatClass(lsf.cstat) === 'normal',
+    rcexp: rc != null && rc >= 0.6 && rc <= 0.9,
+    spo2: spo2 != null && spo2 >= 92,
+    etco2: etco2 != null && etco2 >= 30 && etco2 <= 45,
+  };
+  const cell = (k, label, val, unit) => `<div data-help="h_${k}" class="${ok[k] ? '' : 'out'}"><span>${label}</span><b>${val}</b><small>${unit}</small></div>`;
+  const html = `<div class="dl-h">${sim.patient.sex === 'F' ? 'Female' : 'Male'} ${sim.patient.height} cm</div>` +
+    cell('rinsp', 'Rinsp', fmt(lsf.rinsp, 0), 'cmH2O/(l/s)') +
+    cell('cstat', 'Cstat', fmt(lsf.cstat, 0), 'ml/cmH2O') +
+    cell('rcexp', 'RCexp', fmt(rc, 2), 's');
+  const side = cell('spo2', 'SpO2', fmt(spo2, 0), '%') + cell('etco2', 'PetCO2', fmt(etco2, 0), 'mmHg');
+  if (html + side !== dlCache) { dlInfo.innerHTML = html; dlSide.innerHTML = side; dlCache = html + side; }
+  $('lungBox').classList.toggle('dl-ok', ok.rinsp && ok.cstat && ok.spo2 && ok.etco2);
 }
 
 // ---------------- 換気モード ----------------
@@ -711,6 +728,7 @@ function resetSim() {
   charts.forEach(c => c.setWindow(c.win));
   loops.forEach(l => { l.cur = []; l.prev = []; l.ref = null; });
   lsf.reset();
+  lung.setMechanics({});
   pendingMarkers = [];
 }
 function setMask(on) { $('patientMask').hidden = !on; }
@@ -787,7 +805,8 @@ function frame(now) {
       else {
         loops.forEach(l => l.newBreath());
         lsf.endBreath(sim.settings.peep);
-        if (mk.triggered) chPaw.mark(mk.t, 1);
+        lung.setMechanics(lsf);
+        if (mk.triggered) { chPaw.mark(mk.t, 1); lung.trigger(); }
       }
     }
     loops.forEach(l => l.push(sm));
@@ -798,7 +817,9 @@ function frame(now) {
   if (scaleTimer > 0.5) { scaleTimer = 0; charts.forEach(c => c.autoscale()); }
   charts.forEach(c => c.draw());
   loops.forEach(l => l.draw());
-  lung.update(sim.V, sim.V / (sim.eff.c / 1000), sim.flow, sim.pmus, running ? dt * speed : 0);
+  lung.update(sim.V, sim.V / (sim.eff.c / 1000), sim.flow, sim.pmus, running ? dt * speed : 0, {
+    pbw: pbw(sim.patient), disconnected: sim.eff.disconnect, overinflated: (lsf.autoPeep ?? 0) >= 5,
+  });
   if (running) alarms.update();
   updateAlarmBar();
   updateAsync();
@@ -827,7 +848,9 @@ function applyVendor(key) {
   renderTiles();
   renderMmp();
   renderSweeps();
-  dlCache = ''; dlInfo.innerHTML = '';
+  setLungDynamic();
+  dlCache = ''; dlInfo.innerHTML = ''; dlSide.innerHTML = '';
+  $('lungBox').classList.remove('dl-ok');
   alarmCache = ''; chipCache = '';
   if (runner.active) runner.render();
 }
@@ -836,8 +859,15 @@ selVendor.innerHTML = Object.entries(VENDORS).map(([k, v]) => `<option value="${
 selVendor.value = vendorKey();
 selVendor.onchange = e => applyVendor(e.target.value);
 
+function setLungDynamic() {
+  const on = vendorKey() === 'hamilton';
+  lung.setDynamic(on);
+  if (on) lung.svg.dataset.help = 'dynlung'; else delete lung.svg.dataset.help;
+}
+
 setVendor(vendorKey());
 applyChartLabels();
+setLungDynamic();
 renderModes();
 renderParams();
 renderPatient();
